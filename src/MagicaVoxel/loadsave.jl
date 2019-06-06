@@ -55,6 +55,14 @@ function toFloat32(bytes::Vector{UInt8})::Float32
     reinterpret(Float32, bytes)[1]
 end
 
+function toRGBA(palette::UInt32)::RGBA
+    r = (palette & 0x0000ff)
+    g = (palette & 0x00ff00) >> 8
+    b = (palette & 0xff0000) >> 16
+    a = 0xff
+    RGBA(./((r, g, b, a), 0xff)...)
+end
+
 function build_chunk(::Any, chunk_content, child_content)
     throw(ChunkError(""))
 end
@@ -63,7 +71,7 @@ end
 # 4        | int        | size x
 # 4        | int        | size y
 # 4        | int        | size z : gravity direction
-function build_chunk(::Val{:SIZE}, chunk_content, child_content)
+function build_chunk(::Val{:SIZE}, chunk_content, child_content)::Size
     x = toInt32(chunk_content[1:4])
     y = toInt32(chunk_content[5:8])
     z = toInt32(chunk_content[9:12])
@@ -75,13 +83,14 @@ end
 # 4 x N    | int        | (x, y, z, colorIndex) : 1 byte for each component
 function build_chunk(::Val{:XYZI}, chunk_content, child_content)
     numVoxels = toInt32(chunk_content[1:4])
-    @info :numVoxels numVoxels
+    @info :XYZI numModels
 end
 
 # 4. Chunk id 'PACK' : if it is absent, only one model in the file
 # 4        | int        | numModels : num of SIZE and XYZI chunks
 function build_chunk(::Val{:PACK}, chunk_content, child_content)
     numModels = toInt32(chunk_content[1:4])
+    @info :PACK numModels
 end
 
 # 7. Chunk id 'RGBA' : palette
@@ -93,7 +102,7 @@ function build_chunk(::Val{:RGBA}, chunk_content, child_content)::Vector{RGBA}
         g = chunk_content[4i+2]
         b = chunk_content[4i+3]
         a = chunk_content[4i+4]
-        rgba = RGBA(./((r, g, b, a), 255)...)
+        rgba = RGBA(./((r, g, b, a), 0xff)...)
         palette[i+1] = rgba
     end
     palette
