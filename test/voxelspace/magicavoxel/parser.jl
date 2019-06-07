@@ -1,7 +1,7 @@
 module test_voxelspace_magicavoxel_parser
 
 using Test
-using VoxelSpace.MagicaVoxel: MagicaVoxel, Chunk, Size, Material, parse_chunk, parse_material, chunk_to_data
+using VoxelSpace.MagicaVoxel: MagicaVoxel, Voxel, Size, Material, parse_chunk, parse_material, chunk_to_data
 using Colors: RGBA
 
 @test MagicaVoxel.DEFAULT_PALETTE[10] == 0x99ccff
@@ -22,24 +22,31 @@ resource("valid_size.bytes") do f
     @test chunk_to_data(chunk) == read(f)
 end
 
-resource("valid_palette.bytes") do f
-    palette = parse_chunk(f)
-    @test length(palette) == 256
-    @test palette[1] == RGBA(1, 1, 1, 1)
-    @test palette[end-1] == RGBA(17/255, 17/255, 17/255, 1)
-    @test palette[end] == RGBA(0, 0, 0, 0)
+resource("valid_voxels.bytes") do f
+    chunk = [Voxel(0, 0, 0, 225), Voxel(0, 1, 1, 215), Voxel(1, 0, 1, 235), Voxel(1, 1, 0, 5)]
+    @test parse_chunk(f) == chunk
 
     seekstart(f)
-    @test chunk_to_data(palette) == read(f)
+    @test chunk_to_data(chunk) == read(f)
+end
+
+resource("valid_palette.bytes") do f
+    chunk = parse_chunk(f)
+    @test length(chunk) == 256
+    @test chunk[1] == RGBA(1, 1, 1, 1)
+    @test chunk[end-1] == RGBA(17/255, 17/255, 17/255, 1)
+    @test chunk[end] == RGBA(0, 0, 0, 0)
+
+    seekstart(f)
+    @test chunk_to_data(chunk) == read(f)
 end
 
 resource("valid_material.bytes") do f
-    m = parse_material(f)
-    @test m.id == 0
-    @test m.properties == (_type = "_diffuse", _weight = "1", _rough = "0.1", _spec = "0.5", _ior = "0.3")
+    chunk = Material(0, (_type = "_diffuse", _weight = "1", _rough = "0.1", _spec = "0.5", _ior = "0.3"))
+    @test parse_material(f) == chunk
 
     seekstart(f)
-    @test chunk_to_data(m) == read(f)
+    @test chunk_to_data(chunk) == read(f)
 end
 
 end # module test_voxelspace_magicavoxel_parser

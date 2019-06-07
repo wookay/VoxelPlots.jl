@@ -57,7 +57,7 @@ function toRGBA(palette::UInt32)::RGBA
     RGBA(./((r, g, b, a), 0xff)...)
 end
 
-function build_chunk(::Any, chunk_content, child_content)
+function build_chunk(::Any, chunk_content, children_chunks)
     throw(ChunkError(""))
 end
 
@@ -65,7 +65,7 @@ end
 # 4        | int        | size x
 # 4        | int        | size y
 # 4        | int        | size z : gravity direction
-function build_chunk(::Val{:SIZE}, chunk_content, child_content)::Size
+function build_chunk(::Val{:SIZE}, chunk_content, children_chunks)::Size
     x = toInt32(chunk_content[1:4])
     y = toInt32(chunk_content[5:8])
     z = toInt32(chunk_content[9:12])
@@ -75,29 +75,35 @@ end
 # 6. Chunk id 'XYZI' : model voxels
 # 4        | int        | numVoxels (N)
 # 4 x N    | int        | (x, y, z, colorIndex) : 1 byte for each component
-function build_chunk(::Val{:XYZI}, chunk_content, child_content)
+function build_chunk(::Val{:XYZI}, chunk_content, children_chunks)::Vector{Voxel}
     numVoxels = toInt32(chunk_content[1:4])
-    @info :XYZI numModels
+    map(1:numVoxels) do idx
+        x = chunk_content[4idx+1]
+        y = chunk_content[4idx+2]
+        z = chunk_content[4idx+3]
+        i = chunk_content[4idx+4]
+        Voxel(x, y, z, i-1)
+    end
 end
 
 # 4. Chunk id 'PACK' : if it is absent, only one model in the file
 # 4        | int        | numModels : num of SIZE and XYZI chunks
-function build_chunk(::Val{:PACK}, chunk_content, child_content)
+function build_chunk(::Val{:PACK}, chunk_content, children_chunks)
     numModels = toInt32(chunk_content[1:4])
     @info :PACK numModels
 end
 
 # 7. Chunk id 'RGBA' : palette
 # 4 x 256  | int        | (R, G, B, A) : 1 byte for each component
-function build_chunk(::Val{:RGBA}, chunk_content, child_content)::Vector{RGBA}
+function build_chunk(::Val{:RGBA}, chunk_content, children_chunks)::Vector{RGBA}
     palette = Vector{RGBA}(undef, 256)
-    for idx in 0:255
-        r = chunk_content[4idx+1]
-        g = chunk_content[4idx+2]
-        b = chunk_content[4idx+3]
-        a = chunk_content[4idx+4]
+    for i in 0:255
+        r = chunk_content[4i+1]
+        g = chunk_content[4i+2]
+        b = chunk_content[4i+3]
+        a = chunk_content[4i+4]
         rgba = RGBA(./((r, g, b, a), 0xff)...)
-        palette[idx+1] = rgba
+        palette[i+1] = rgba
     end
     palette
 end
@@ -114,8 +120,8 @@ function parse_chunk(stream::IO)
     content_size = toInt32(read(stream, 4))
     children_size = toInt32(read(stream, 4))
     chunk_content = read(stream, content_size)
-    child_content = read(stream, children_size)
-    build_chunk(Val(chunk_id), chunk_content, child_content)
+    children_chunks = read(stream, children_size)
+    build_chunk(Val(chunk_id), chunk_content, children_chunks)
 end
 
 function parse_material(stream::IO)::Material
@@ -158,6 +164,16 @@ function chunk_to_data(palette::Vector{RGBA})::Vector{UInt8}
     UInt8["RGBA"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
 end
 
+function chunk_to_data(voxels::Vector{Voxel})::Vector{UInt8}
+    numVoxels = Int32(length(voxels))
+    bytes = mapfoldl(vcat, voxels) do voxel
+        [voxel.x, voxel.y, voxel.z, UInt8(voxel.i + 1)]
+    end
+    content_size = Int32(sizeof(numVoxels) + length(bytes))
+    children_size = Int32(0)
+    UInt8["XYZI"..., reinterpret(UInt8, [content_size, children_size, numVoxels])..., bytes...]
+end
+
 function encode_material_property_string(str::String)::Vector{UInt8}
     bytes = Vector{UInt8}(str)
     count = Int32(length(bytes))
@@ -166,13 +182,11 @@ end
 
 function chunk_to_data(material::Material)::Vector{UInt8}
     count = Int32(length(material.properties))
-    bytes = Vector{UInt8}()
-    append!(bytes, reinterpret(UInt8, [material.id, count]))
-    for (key, value) in pairs(material.properties)
-        append!(bytes, encode_material_property_string(String(key)))
-        append!(bytes, encode_material_property_string(value))
+    bytes = mapfoldl(vcat, pairs(material.properties)) do (key, value)
+        vcat(encode_material_property_string(String(key)),
+             encode_material_property_string(value))
     end
-    bytes
+    UInt8[reinterpret(UInt8, [material.id, count])..., bytes...]
 end
 
 const DEFAULT_PALETTE = [
