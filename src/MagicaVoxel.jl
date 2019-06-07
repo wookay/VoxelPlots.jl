@@ -1,5 +1,5 @@
 module MagicaVoxel # VoxelSpace
 
-include("MagicaVoxel/loadsave.jl")
+include("MagicaVoxel/parser.jl")
 
 end # module VoxelSpace.MagicaVoxel

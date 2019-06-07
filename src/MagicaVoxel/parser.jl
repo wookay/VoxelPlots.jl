@@ -40,19 +40,13 @@ struct ChunkError <: Exception
     msg
 end
 
-function toInt32(bytes::Vector{UInt8})::Int32
-    @assert length(bytes) == 4
-    reinterpret(Int32, bytes)[1]
-end
-
-function toUInt32(bytes::Vector{UInt8})::UInt32
-    @assert length(bytes) == 4
-    reinterpret(UInt32, bytes)[1]
-end
-
-function toFloat32(bytes::Vector{UInt8})::Float32
-    @assert length(bytes) == 4
-    reinterpret(Float32, bytes)[1]
+# toInt32, toUInt32, toFloat32
+for typ in (Int32, UInt32, Float32)
+    funcname = Symbol(:to, typ)
+    @eval function $funcname(bytes::Vector{UInt8})::$typ
+        @assert length(bytes) == 4
+        reinterpret($typ, bytes)[1]
+    end
 end
 
 function toRGBA(palette::UInt32)::RGBA
@@ -97,13 +91,13 @@ end
 # 4 x 256  | int        | (R, G, B, A) : 1 byte for each component
 function build_chunk(::Val{:RGBA}, chunk_content, child_content)::Vector{RGBA}
     palette = Vector{RGBA}(undef, 256)
-    for i in 0:255
-        r = chunk_content[4i+1]
-        g = chunk_content[4i+2]
-        b = chunk_content[4i+3]
-        a = chunk_content[4i+4]
+    for idx in 0:255
+        r = chunk_content[4idx+1]
+        g = chunk_content[4idx+2]
+        b = chunk_content[4idx+3]
+        a = chunk_content[4idx+4]
         rgba = RGBA(./((r, g, b, a), 0xff)...)
-        palette[i+1] = rgba
+        palette[idx+1] = rgba
     end
     palette
 end
@@ -126,26 +120,59 @@ end
 
 function parse_material(stream::IO)::Material
     id = toUInt32(read(stream, 4))
-    properties = parse_properties(stream)
+    properties = parse_material_properties(stream)
     Material(id, properties)
 end
 
-function parse_material_string(stream::IO)
+function parse_material_property_string(stream::IO)::String
     n = toInt32(read(stream, 4))
     String(read(stream, n))
 end
 
-function parse_properties(stream::IO)
+function parse_material_properties(stream::IO)::NamedTuple
     count = toInt32(read(stream, 4))
     keys = []
     values = []
-    for i in 1:count
-        key = parse_material_string(stream)
-        value = parse_material_string(stream)
+    for _ in 1:count
+        key = parse_material_property_string(stream)
+        value = parse_material_property_string(stream)
         push!(keys, key)
         push!(values, value)
     end
     NamedTuple{Symbol.(tuple(keys...))}(values)
+end
+
+function chunk_to_data(size::Size)::Vector{UInt8}
+    bytes = reinterpret(UInt8, [size.x, size.y, size.z])
+    content_size = Int32(length(bytes))
+    children_size = Int32(0)
+    UInt8["SIZE"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
+end
+
+function chunk_to_data(palette::Vector{RGBA})::Vector{UInt8}
+    bytes = mapfoldl(vcat, palette) do rgba
+        round.(UInt8, .*(0xff, [rgba.r, rgba.g, rgba.b, rgba.alpha]))
+    end
+    content_size = Int32(length(bytes))
+    children_size = Int32(0)
+    UInt8["RGBA"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
+end
+
+function encode_material_property_string(str::String)::Vector{UInt8}
+    bytes = Vector{UInt8}(str)
+    count = Int32(length(bytes))
+    UInt8[reinterpret(UInt8, [count])..., bytes...]
+end
+
+function chunk_to_data(material::Material)::Vector{UInt8}
+    count = Int32(length(material.properties))
+    bytes = Vector{UInt8}()
+    append!(bytes, reinterpret(UInt8, [material.id, count]))
+    for (key, value) in pairs(material.properties)
+        append!(bytes, encode_material_property_string(String(key)))
+        append!(bytes, encode_material_property_string(value))
+    end
+    bytes
 end
 
 const DEFAULT_PALETTE = [
