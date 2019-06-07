@@ -4,15 +4,14 @@ using Test
 using VoxelSpace.MagicaVoxel: MagicaVoxel, Voxel, Size, Material, parse_chunk, parse_material, chunk_to_data
 using Colors: RGBA
 
-@test MagicaVoxel.DEFAULT_PALETTE[10] == 0x99ccff
-@test MagicaVoxel.toRGBA(0x99ccff) == RGBA(1, 0.8, 0.6, 1)
-
 function resource(block, filename)
     path = normpath(@__DIR__, "resources", filename)
     f = open(path)
     block(f)
     close(f)
 end
+
+# https://github.com/davidedmonds/dot_vox/blob/master/src/parser.rs#L209
 
 resource("valid_size.bytes") do f
     chunk = Size(24, 24, 24)
@@ -32,6 +31,7 @@ end
 
 resource("valid_palette.bytes") do f
     chunk = parse_chunk(f)
+    @test chunk isa Vector{RGBA}
     @test length(chunk) == 256
     @test chunk[1] == RGBA(1, 1, 1, 1)
     @test chunk[end-1] == RGBA(17/255, 17/255, 17/255, 1)
@@ -39,6 +39,12 @@ resource("valid_palette.bytes") do f
 
     seekstart(f)
     @test chunk_to_data(chunk) == read(f)
+end
+
+resource("default_palette.bytes") do f
+    chunk = MagicaVoxel.build_chunk(Val{:RGBA}(), read(f), [])
+    @test chunk == MagicaVoxel.DEFAULT_PALETTE
+    @test MagicaVoxel.toRGBA(0x99ccff) == RGBA(1, 0.8, 0.6, 1)
 end
 
 resource("valid_material.bytes") do f
