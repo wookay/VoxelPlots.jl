@@ -1,7 +1,7 @@
 module test_voxelspace_magicavoxel_parser
 
 using Test
-using VoxelSpace.MagicaVoxel: MagicaVoxel, Voxel, Size, Material, parse_chunk, parse_material, chunk_to_data
+using VoxelSpace.MagicaVoxel: MagicaVoxel, Voxel, Model, Size, Material, VoxData, parse_chunk, parse_material, parse_vox_file, chunk_to_data
 using Colors: RGBA
 
 function resource(block, filename)
@@ -15,7 +15,7 @@ end
 
 resource("valid_size.bytes") do f
     chunk = Size(24, 24, 24)
-    @test parse_chunk(f) == chunk
+    @test parse_chunk(f) == (:SIZE, chunk)
 
     seekstart(f)
     @test chunk_to_data(chunk) == read(f)
@@ -23,14 +23,14 @@ end
 
 resource("valid_voxels.bytes") do f
     chunk = [Voxel(0, 0, 0, 225), Voxel(0, 1, 1, 215), Voxel(1, 0, 1, 235), Voxel(1, 1, 0, 5)]
-    @test parse_chunk(f) == chunk
+    @test parse_chunk(f) == (:XYZI, chunk)
 
     seekstart(f)
     @test chunk_to_data(chunk) == read(f)
 end
 
 resource("valid_palette.bytes") do f
-    chunk = parse_chunk(f)
+    (chunk_id, chunk) = parse_chunk(f)
     @test chunk isa Vector{RGBA}
     @test length(chunk) == 256
     @test chunk[1] == RGBA(1, 1, 1, 1)
@@ -41,18 +41,28 @@ resource("valid_palette.bytes") do f
     @test chunk_to_data(chunk) == read(f)
 end
 
-resource("default_palette.bytes") do f
-    chunk = MagicaVoxel.build_chunk(Val{:RGBA}(), read(f), [])
-    @test chunk == MagicaVoxel.DEFAULT_PALETTE
-    @test MagicaVoxel.toRGBA(0x99ccff) == RGBA(1, 0.8, 0.6, 1)
-end
-
 resource("valid_material.bytes") do f
     chunk = Material(0, (_type = "_diffuse", _weight = "1", _rough = "0.1", _spec = "0.5", _ior = "0.3"))
     @test parse_material(f) == chunk
 
     seekstart(f)
     @test chunk_to_data(chunk) == read(f)
+end
+
+resource("default_palette.bytes") do f
+    chunk = MagicaVoxel.build_chunk(Val{:RGBA}(), f, 0, 0)
+    @test chunk == MagicaVoxel.DEFAULT_PALETTE
+    @test MagicaVoxel.toRGBA(0xff99ccff) == RGBA(1, 0.8, 0.6, 1)
+end
+
+resource("placeholder.vox") do f
+    chunk = parse_vox_file(f)
+    @test chunk.version == 150
+    @test chunk.models[1].voxels == [Voxel(0, 0, 0, 225), Voxel(0, 1, 1, 215), Voxel(1, 0, 1, 235), Voxel(1, 1,0, 5)]
+    @test chunk.palette == MagicaVoxel.DEFAULT_PALETTE
+    @test chunk.materials == map(0:255) do i
+            Material(i, (_type = "_diffuse", _weight = "1", _rough = "0.1", _spec = "0.5", _ior = "0.3"))
+        end
 end
 
 end # module test_voxelspace_magicavoxel_parser

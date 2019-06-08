@@ -25,15 +25,11 @@ struct Material
     properties::NamedTuple
 end
 
-struct Chunk
-    main::Vector{Chunk}
-    size::Size
-    voxels::Vector{Voxel}
-    pack::Model
-    palette::Vector{UInt32}
-    material::Material
-    unknown::String
-    invalid::Vector{UInt8}
+struct VoxData
+    version::Int32
+    models::Vector{Model}
+    palette::Vector{RGBA}
+    materials::Vector{Material}
 end
 
 struct ChunkError <: Exception
@@ -50,14 +46,14 @@ for typ in (Int32, UInt32, Float32)
 end
 
 function toRGBA(palette::UInt32)::RGBA
-    r = (palette & 0x0000ff)
-    g = (palette & 0x00ff00) >> 8
-    b = (palette & 0xff0000) >> 16
-    a = 0xff
+    r = (palette & 0x00_00_00_ff)
+    g = (palette & 0x00_00_ff_00) >> 8
+    b = (palette & 0x00_ff_00_00) >> 16
+    a = (palette & 0xff_00_00_00) >> 24
     RGBA(./((r, g, b, a), 0xff)...)
 end
 
-function build_chunk(::Any, chunk_content, children_chunks)
+function build_chunk(::Any, stream::IO, content_size, children_size)
     throw(ChunkError(""))
 end
 
@@ -65,47 +61,182 @@ end
 # 4        | int        | size x
 # 4        | int        | size y
 # 4        | int        | size z : gravity direction
-function build_chunk(::Val{:SIZE}, chunk_content, children_chunks)::Size
-    x = toInt32(chunk_content[1:4])
-    y = toInt32(chunk_content[5:8])
-    z = toInt32(chunk_content[9:12])
+function build_chunk(::Val{:SIZE}, stream::IO, content_size, children_size)::Size
+    x = toInt32(read(stream, 4))
+    y = toInt32(read(stream, 4))
+    z = toInt32(read(stream, 4))
     Size(x, y, z)
 end
 
 # 6. Chunk id 'XYZI' : model voxels
 # 4        | int        | numVoxels (N)
 # 4 x N    | int        | (x, y, z, colorIndex) : 1 byte for each component
-function build_chunk(::Val{:XYZI}, chunk_content, children_chunks)::Vector{Voxel}
-    numVoxels = toInt32(chunk_content[1:4])
-    map(1:numVoxels) do idx
-        x = chunk_content[4idx+1]
-        y = chunk_content[4idx+2]
-        z = chunk_content[4idx+3]
-        i = chunk_content[4idx+4]
+function build_chunk(::Val{:XYZI}, stream::IO, content_size, children_size)::Vector{Voxel}
+    map(1:parse_vox_numof(stream)) do idx
+        x, y, z, i = read(stream, 4)
         Voxel(x, y, z, i-1)
     end
 end
 
-# 4. Chunk id 'PACK' : if it is absent, only one model in the file
-# 4        | int        | numModels : num of SIZE and XYZI chunks
-function build_chunk(::Val{:PACK}, chunk_content, children_chunks)
-    numModels = toInt32(chunk_content[1:4])
-    @info :PACK numModels
-end
-
 # 7. Chunk id 'RGBA' : palette
 # 4 x 256  | int        | (R, G, B, A) : 1 byte for each component
-function build_chunk(::Val{:RGBA}, chunk_content, children_chunks)::Vector{RGBA}
+function build_chunk(::Val{:RGBA}, stream::IO, content_size, children_size)::Vector{RGBA}
     palette = Vector{RGBA}(undef, 256)
     for i in 0:255
-        r = chunk_content[4i+1]
-        g = chunk_content[4i+2]
-        b = chunk_content[4i+3]
-        a = chunk_content[4i+4]
+        r, g, b, a = read(stream, 4)
         rgba = RGBA(./((r, g, b, a), 0xff)...)
         palette[i+1] = rgba
     end
     palette
+end
+
+# (1) Transform Node Chunk : "nTRN"
+# int32	: node id
+# DICT	: node attributes
+# 	  (_name : string)
+# 	  (_hidden : 0/1)
+# int32 	: child node id
+# int32 	: reserved id (must be -1)
+# int32	: layer id
+# int32	: num of frames (must be 1)
+function build_chunk(::Val{:nTRN}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    node_attributes = parse_vox_dict(stream)
+    child_node_id = parse_vox_id(stream)
+    reserved_id = parse_vox_id(stream) # -1
+    layer_id = parse_vox_id(stream)
+    for _ in 1:parse_vox_numof(stream)
+        parse_vox_dict(stream)
+    end
+end
+
+# (2) Group Node Chunk : "nGRP"
+# int32	: node id
+# DICT	: node attributes
+# int32 	: num of children nodes
+function build_chunk(::Val{:nGRP}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    node_attributes = parse_vox_dict(stream)
+    for _ in 1:parse_vox_numof(stream)
+        child_node_id = parse_vox_id(stream)
+    end
+end
+
+# (3) Shape Node Chunk : "nSHP"
+# int32	: node id
+# DICT	: node attributes
+# int32 	: num of models (must be 1)
+# // for each model
+# {
+# int32	: model id
+# DICT	: model attributes : reserved
+# }xN
+function build_chunk(::Val{:nSHP}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    node_attributes = parse_vox_dict(stream)
+    for _ in 1:parse_vox_numof(stream)
+        model_id = parse_vox_id(stream)
+        model_attributes = parse_vox_dict(stream)
+    end
+end
+
+# (5) Layer Chunk : "LAYR"
+# int32	: layer id
+# DICT	: layer atrribute
+# 	  (_name : string)
+# 	  (_hidden : 0/1)
+# int32	: reserved id, must be -1
+function build_chunk(::Val{:LAYR}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    node_attributes = parse_vox_dict(stream)
+    reserved_id = parse_vox_id(stream) # -1
+end
+
+# (4) Material Chunk : "MATL"
+# int32	: material id
+# DICT	: material properties
+# 	  (_type : str) _diffuse, _metal, _glass, _emit
+# 	  (_weight : float) range 0 ~ 1
+# 	  (_rough : float)
+# 	  (_spec : float)
+# 	  (_ior : float)
+# 	  (_att : float)
+# 	  (_flux : float)
+# 	  (_plastic)
+function build_chunk(::Val{:MATL}, stream::IO, content_size, children_size)
+    parse_material(stream)
+end
+
+function build_chunk(::Val{:rLIT}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    read(stream, content_size - 4)
+end
+
+function build_chunk(::Val{:rAIR}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    read(stream, content_size - 4)
+end
+
+function build_chunk(::Val{:rLEN}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    read(stream, content_size - 4)
+end
+
+function build_chunk(::Val{:POST}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    read(stream, content_size - 4)
+end
+
+function build_chunk(::Val{:rDIS}, stream::IO, content_size, children_size)
+    node_id = parse_vox_id(stream)
+    read(stream, content_size - 4)
+end
+
+# 3. Chunk id 'MAIN' : the root chunk and parent chunk of all the other chunks
+function build_chunk(::Val{:MAIN}, stream::IO, content_size, children_size)::NamedTuple{(:models, :palette, :materials)}
+    models = Vector{Model}()
+    palette = Vector{RGBA}()
+    materials = Vector{Material}()
+    pos = position(stream)
+    cur = pos
+    prev_size = nothing
+    while cur + children_size > pos
+        (chunk_id, chunk) = parse_chunk(stream)
+        if :SIZE === chunk_id
+            prev_size = chunk
+        elseif :XYZI === chunk_id
+            push!(models, Model(prev_size, chunk))
+        elseif :RGBA === chunk_id
+            append!(palette, chunk)
+        elseif :MATL === chunk_id
+            push!(materials, chunk)
+        else
+        end
+        pos = position(stream)
+    end
+    (models = models, palette = palette, materials = materials)
+end
+
+# 4. Chunk id 'PACK' : if it is absent, only one model in the file
+# 4        | int        | numModels : num of SIZE and XYZI chunks
+function build_chunk(::Val{:PACK}, stream::IO, content_size, children_size)::Vector{Model}
+    models = Vector{Model}()
+    for _ in 1:parse_vox_numof(stream)
+        size = parse_chunk(stream) # SIZE
+        voxels = parse_chunk(stream) # XYZI
+        push!(models, Model(size, voxels))
+    end
+    models
+end
+
+# 1. File Structure : RIFF style
+# 1x4      | char       | id 'VOX ' : 'V' 'O' 'X' 'space', 'V' is first
+# 4        | int        | version number : 150
+function parse_vox_file(stream::IO)::VoxData
+    magic = read(stream, 4) # "VOX "
+    version = toInt32(read(stream, 4)) # 150
+    (chunk_id, chunk) = parse_chunk(stream)
+    VoxData(version, chunk.models, chunk.palette, chunk.materials)
 end
 
 # 2. Chunk Structure
@@ -117,31 +248,37 @@ end
 function parse_chunk(stream::IO)
     id = read(stream, 4)
     chunk_id = Symbol(id)
-    content_size = toInt32(read(stream, 4))
-    children_size = toInt32(read(stream, 4))
-    chunk_content = read(stream, content_size)
-    children_chunks = read(stream, children_size)
-    build_chunk(Val(chunk_id), chunk_content, children_chunks)
+    content_size = parse_vox_numof(stream)
+    children_size = parse_vox_numof(stream)
+    chunk = build_chunk(Val(chunk_id), stream, content_size, children_size)
+    (chunk_id, chunk)
 end
 
 function parse_material(stream::IO)::Material
     id = toUInt32(read(stream, 4))
-    properties = parse_material_properties(stream)
+    properties = parse_vox_dict(stream)
     Material(id, properties)
 end
 
-function parse_material_property_string(stream::IO)::String
+function parse_vox_id(stream::IO)::Int32
+    toInt32(read(stream, 4))
+end
+
+function parse_vox_numof(stream::IO)::Int32
+    toInt32(read(stream, 4))
+end
+
+function parse_vox_string(stream::IO)::String
     n = toInt32(read(stream, 4))
     String(read(stream, n))
 end
 
-function parse_material_properties(stream::IO)::NamedTuple
-    count = toInt32(read(stream, 4))
+function parse_vox_dict(stream::IO)::NamedTuple
     keys = []
     values = []
-    for _ in 1:count
-        key = parse_material_property_string(stream)
-        value = parse_material_property_string(stream)
+    for _ in 1:parse_vox_numof(stream)
+        key = parse_vox_string(stream)
+        value = parse_vox_string(stream)
         push!(keys, key)
         push!(values, value)
     end
@@ -189,23 +326,37 @@ function chunk_to_data(material::Material)::Vector{UInt8}
     UInt8[reinterpret(UInt8, [material.id, count])..., bytes...]
 end
 
-palette_data = [
-              0xffffff, 0xccffff, 0x99ffff, 0x66ffff, 0x33ffff, 0x00ffff, 0xffccff, 0xccccff, 0x99ccff, 0x66ccff, 0x33ccff, 0x00ccff, 0xff99ff, 0xcc99ff, 0x9999ff,
-    0x6699ff, 0x3399ff, 0x0099ff, 0xff66ff, 0xcc66ff, 0x9966ff, 0x6666ff, 0x3366ff, 0x0066ff, 0xff33ff, 0xcc33ff, 0x9933ff, 0x6633ff, 0x3333ff, 0x0033ff, 0xff00ff,
-    0xcc00ff, 0x9900ff, 0x6600ff, 0x3300ff, 0x0000ff, 0xffffcc, 0xccffcc, 0x99ffcc, 0x66ffcc, 0x33ffcc, 0x00ffcc, 0xffcccc, 0xcccccc, 0x99cccc, 0x66cccc, 0x33cccc,
-    0x00cccc, 0xff99cc, 0xcc99cc, 0x9999cc, 0x6699cc, 0x3399cc, 0x0099cc, 0xff66cc, 0xcc66cc, 0x9966cc, 0x6666cc, 0x3366cc, 0x0066cc, 0xff33cc, 0xcc33cc, 0x9933cc,
-    0x6633cc, 0x3333cc, 0x0033cc, 0xff00cc, 0xcc00cc, 0x9900cc, 0x6600cc, 0x3300cc, 0x0000cc, 0xffff99, 0xccff99, 0x99ff99, 0x66ff99, 0x33ff99, 0x00ff99, 0xffcc99,
-    0xcccc99, 0x99cc99, 0x66cc99, 0x33cc99, 0x00cc99, 0xff9999, 0xcc9999, 0x999999, 0x669999, 0x339999, 0x009999, 0xff6699, 0xcc6699, 0x996699, 0x666699, 0x336699,
-    0x006699, 0xff3399, 0xcc3399, 0x993399, 0x663399, 0x333399, 0x003399, 0xff0099, 0xcc0099, 0x990099, 0x660099, 0x330099, 0x000099, 0xffff66, 0xccff66, 0x99ff66,
-    0x66ff66, 0x33ff66, 0x00ff66, 0xffcc66, 0xcccc66, 0x99cc66, 0x66cc66, 0x33cc66, 0x00cc66, 0xff9966, 0xcc9966, 0x999966, 0x669966, 0x339966, 0x009966, 0xff6666,
-    0xcc6666, 0x996666, 0x666666, 0x336666, 0x006666, 0xff3366, 0xcc3366, 0x993366, 0x663366, 0x333366, 0x003366, 0xff0066, 0xcc0066, 0x990066, 0x660066, 0x330066,
-    0x000066, 0xffff33, 0xccff33, 0x99ff33, 0x66ff33, 0x33ff33, 0x00ff33, 0xffcc33, 0xcccc33, 0x99cc33, 0x66cc33, 0x33cc33, 0x00cc33, 0xff9933, 0xcc9933, 0x999933,
-    0x669933, 0x339933, 0x009933, 0xff6633, 0xcc6633, 0x996633, 0x666633, 0x336633, 0x006633, 0xff3333, 0xcc3333, 0x993333, 0x663333, 0x333333, 0x003333, 0xff0033,
-    0xcc0033, 0x990033, 0x660033, 0x330033, 0x000033, 0xffff00, 0xccff00, 0x99ff00, 0x66ff00, 0x33ff00, 0x00ff00, 0xffcc00, 0xcccc00, 0x99cc00, 0x66cc00, 0x33cc00,
-    0x00cc00, 0xff9900, 0xcc9900, 0x999900, 0x669900, 0x339900, 0x009900, 0xff6600, 0xcc6600, 0x996600, 0x666600, 0x336600, 0x006600, 0xff3300, 0xcc3300, 0x993300,
-    0x663300, 0x333300, 0x003300, 0xff0000, 0xcc0000, 0x990000, 0x660000, 0x330000, 0x0000ee, 0x0000dd, 0x0000bb, 0x0000aa, 0x000088, 0x000077, 0x000055, 0x000044,
-    0x000022, 0x000011, 0x00ee00, 0x00dd00, 0x00bb00, 0x00aa00, 0x008800, 0x007700, 0x005500, 0x004400, 0x002200, 0x001100, 0xee0000, 0xdd0000, 0xbb0000, 0xaa0000,
-    0x880000, 0x770000, 0x550000, 0x440000, 0x220000, 0x110000, 0xeeeeee, 0xdddddd, 0xbbbbbb, 0xaaaaaa, 0x888888, 0x777777, 0x555555, 0x444444, 0x222222, 0x111111]
-const DEFAULT_PALETTE = [toRGBA.(palette_data)..., RGBA(0, 0, 0, 0)]
+const VOX_VERSION_NUMBER = 150
+const _default_palette = [
+                0xffffffff, 0xffccffff, 0xff99ffff, 0xff66ffff, 0xff33ffff, 0xff00ffff, 0xffffccff, 0xffccccff, 0xff99ccff, 0xff66ccff, 0xff33ccff, 0xff00ccff, 0xffff99ff, 0xffcc99ff, 0xff9999ff,
+    0xff6699ff, 0xff3399ff, 0xff0099ff, 0xffff66ff, 0xffcc66ff, 0xff9966ff, 0xff6666ff, 0xff3366ff, 0xff0066ff, 0xffff33ff, 0xffcc33ff, 0xff9933ff, 0xff6633ff, 0xff3333ff, 0xff0033ff, 0xffff00ff,
+    0xffcc00ff, 0xff9900ff, 0xff6600ff, 0xff3300ff, 0xff0000ff, 0xffffffcc, 0xffccffcc, 0xff99ffcc, 0xff66ffcc, 0xff33ffcc, 0xff00ffcc, 0xffffcccc, 0xffcccccc, 0xff99cccc, 0xff66cccc, 0xff33cccc,
+    0xff00cccc, 0xffff99cc, 0xffcc99cc, 0xff9999cc, 0xff6699cc, 0xff3399cc, 0xff0099cc, 0xffff66cc, 0xffcc66cc, 0xff9966cc, 0xff6666cc, 0xff3366cc, 0xff0066cc, 0xffff33cc, 0xffcc33cc, 0xff9933cc,
+    0xff6633cc, 0xff3333cc, 0xff0033cc, 0xffff00cc, 0xffcc00cc, 0xff9900cc, 0xff6600cc, 0xff3300cc, 0xff0000cc, 0xffffff99, 0xffccff99, 0xff99ff99, 0xff66ff99, 0xff33ff99, 0xff00ff99, 0xffffcc99,
+    0xffcccc99, 0xff99cc99, 0xff66cc99, 0xff33cc99, 0xff00cc99, 0xffff9999, 0xffcc9999, 0xff999999, 0xff669999, 0xff339999, 0xff009999, 0xffff6699, 0xffcc6699, 0xff996699, 0xff666699, 0xff336699,
+    0xff006699, 0xffff3399, 0xffcc3399, 0xff993399, 0xff663399, 0xff333399, 0xff003399, 0xffff0099, 0xffcc0099, 0xff990099, 0xff660099, 0xff330099, 0xff000099, 0xffffff66, 0xffccff66, 0xff99ff66,
+    0xff66ff66, 0xff33ff66, 0xff00ff66, 0xffffcc66, 0xffcccc66, 0xff99cc66, 0xff66cc66, 0xff33cc66, 0xff00cc66, 0xffff9966, 0xffcc9966, 0xff999966, 0xff669966, 0xff339966, 0xff009966, 0xffff6666,
+    0xffcc6666, 0xff996666, 0xff666666, 0xff336666, 0xff006666, 0xffff3366, 0xffcc3366, 0xff993366, 0xff663366, 0xff333366, 0xff003366, 0xffff0066, 0xffcc0066, 0xff990066, 0xff660066, 0xff330066,
+    0xff000066, 0xffffff33, 0xffccff33, 0xff99ff33, 0xff66ff33, 0xff33ff33, 0xff00ff33, 0xffffcc33, 0xffcccc33, 0xff99cc33, 0xff66cc33, 0xff33cc33, 0xff00cc33, 0xffff9933, 0xffcc9933, 0xff999933,
+    0xff669933, 0xff339933, 0xff009933, 0xffff6633, 0xffcc6633, 0xff996633, 0xff666633, 0xff336633, 0xff006633, 0xffff3333, 0xffcc3333, 0xff993333, 0xff663333, 0xff333333, 0xff003333, 0xffff0033,
+    0xffcc0033, 0xff990033, 0xff660033, 0xff330033, 0xff000033, 0xffffff00, 0xffccff00, 0xff99ff00, 0xff66ff00, 0xff33ff00, 0xff00ff00, 0xffffcc00, 0xffcccc00, 0xff99cc00, 0xff66cc00, 0xff33cc00,
+    0xff00cc00, 0xffff9900, 0xffcc9900, 0xff999900, 0xff669900, 0xff339900, 0xff009900, 0xffff6600, 0xffcc6600, 0xff996600, 0xff666600, 0xff336600, 0xff006600, 0xffff3300, 0xffcc3300, 0xff993300,
+    0xff663300, 0xff333300, 0xff003300, 0xffff0000, 0xffcc0000, 0xff990000, 0xff660000, 0xff330000, 0xff0000ee, 0xff0000dd, 0xff0000bb, 0xff0000aa, 0xff000088, 0xff000077, 0xff000055, 0xff000044,
+    0xff000022, 0xff000011, 0xff00ee00, 0xff00dd00, 0xff00bb00, 0xff00aa00, 0xff008800, 0xff007700, 0xff005500, 0xff004400, 0xff002200, 0xff001100, 0xffee0000, 0xffdd0000, 0xffbb0000, 0xffaa0000,
+    0xff880000, 0xff770000, 0xff550000, 0xff440000, 0xff220000, 0xff110000, 0xffeeeeee, 0xffdddddd, 0xffbbbbbb, 0xffaaaaaa, 0xff888888, 0xff777777, 0xff555555, 0xff444444, 0xff222222, 0xff111111,
+    0x00000000]
+const DEFAULT_PALETTE = toRGBA.(_default_palette)
+const DEFAULT_MATERIALS = map(1:256) do i
+        Material(i, (_ior = "0.3", _spec = "0.5", _rough = "0.1", _type = "_diffuse", _weight = "1"))
+    end
+
+function placeholder(palette::Vector{RGBA}, materials::Vector{Material})::VoxData
+    VoxData(
+        VOX_VERSION_NUMBER,
+        [Model(Size(2, 2, 2), [Voxel(0, 0, 0, 225), Voxel(0, 1, 1, 215), Voxel(1, 0, 1, 235), Voxel(1, 1,0, 5)])],
+        DEFAULT_PALETTE,
+        DEFAULT_MATERIALS
+    )
+end
 
 # module VoxelSpace.MagicaVoxel
