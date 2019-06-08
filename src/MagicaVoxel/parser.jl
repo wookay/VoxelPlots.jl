@@ -42,6 +42,15 @@ struct ChunkError <: Exception
     msg
 end
 
+for typ in (Model, VoxData)
+    @eval function Base.:(==)(l::T, r::T) where {T <: $typ}
+        for name in fieldnames(T)
+            getfield(l, name) != getfield(r, name) && return false
+        end
+        return true
+    end
+end
+
 # toInt32, toUInt32, toFloat32
 for typ in (Int32, UInt32, Float32)
     funcname = Symbol(:to, typ)
@@ -130,7 +139,7 @@ function build_chunk(::Val{:nTRN}, stream::IO, content_size, children_size)::Unk
     for _ in 1:parse_vox_numof(stream)
         parse_vox_dict(stream)
     end
-    Unknown(:nTRN)
+    return Unknown(:nTRN)
 end
 
 # (2) Group Node Chunk : "nGRP"
@@ -143,7 +152,7 @@ function build_chunk(::Val{:nGRP}, stream::IO, content_size, children_size)::Unk
     for _ in 1:parse_vox_numof(stream)
         child_node_id = parse_vox_id(stream)
     end
-    Unknown(:nGRP)
+    return Unknown(:nGRP)
 end
 
 # (3) Shape Node Chunk : "nSHP"
@@ -162,7 +171,7 @@ function build_chunk(::Val{:nSHP}, stream::IO, content_size, children_size)::Unk
         model_id = parse_vox_id(stream)
         model_attributes = parse_vox_dict(stream)
     end
-    Unknown(:nSHP)
+    return Unknown(:nSHP)
 end
 
 # (5) Layer Chunk : "LAYR"
@@ -175,37 +184,37 @@ function build_chunk(::Val{:LAYR}, stream::IO, content_size, children_size)::Unk
     node_id = parse_vox_id(stream)
     node_attributes = parse_vox_dict(stream)
     reserved_id = parse_vox_id(stream) # -1
-    Unknown(:LAYR)
+    return Unknown(:LAYR)
 end
 
 function build_chunk(::Val{:rLIT}, stream::IO, content_size, children_size)::Unknown
     node_id = parse_vox_id(stream)
     read(stream, content_size - 4)
-    Unknown(:rLIT)
+    return Unknown(:rLIT)
 end
 
 function build_chunk(::Val{:rAIR}, stream::IO, content_size, children_size)::Unknown
     node_id = parse_vox_id(stream)
     read(stream, content_size - 4)
-    Unknown(:rAIR)
+    return Unknown(:rAIR)
 end
 
 function build_chunk(::Val{:rLEN}, stream::IO, content_size, children_size)::Unknown
     node_id = parse_vox_id(stream)
     read(stream, content_size - 4)
-    Unknown(:rLEN)
+    return Unknown(:rLEN)
 end
 
 function build_chunk(::Val{:POST}, stream::IO, content_size, children_size)::Unknown
     node_id = parse_vox_id(stream)
     read(stream, content_size - 4)
-    Unknown(:POST)
+    return Unknown(:POST)
 end
 
 function build_chunk(::Val{:rDIS}, stream::IO, content_size, children_size)::Unknown
     node_id = parse_vox_id(stream)
     read(stream, content_size - 4)
-    Unknown(:rDIS)
+    return Unknown(:rDIS)
 end
 
 # 4. Chunk id 'PACK' : if it is absent, only one model in the file
@@ -213,8 +222,8 @@ end
 function build_chunk(::Val{:PACK}, stream::IO, content_size, children_size)::Vector{Model}
     models = Vector{Model}()
     for _ in 1:parse_vox_numof(stream)
-        size = parse_chunk(stream) # SIZE
-        voxels = parse_chunk(stream) # XYZI
+        (chunk_id, size) = parse_chunk(stream) # SIZE
+        (chunk_id, voxels) = parse_chunk(stream) # XYZI
         push!(models, Model(size, voxels))
     end
     models
@@ -343,6 +352,15 @@ function chunk_to_data(material::Material)::Vector{UInt8}
     UInt8[reinterpret(UInt8, [material.id, count])..., bytes...]
 end
 
+function placeholder(palette::Vector{<:RGBA}, materials::Vector{Material})::VoxData
+    VoxData(
+        VOX_VERSION_NUMBER,
+        [Model(Size(2, 2, 2), [Voxel(0, 0, 0, 225), Voxel(0, 1, 1, 215), Voxel(1, 0, 1, 235), Voxel(1, 1,0, 5)])],
+        palette,
+        materials
+    )
+end
+
 const VOX_VERSION_NUMBER = 150
 const _default_palette = [
                 0xffffffff, 0xffccffff, 0xff99ffff, 0xff66ffff, 0xff33ffff, 0xff00ffff, 0xffffccff, 0xffccccff, 0xff99ccff, 0xff66ccff, 0xff33ccff, 0xff00ccff, 0xffff99ff, 0xffcc99ff, 0xff9999ff,
@@ -362,18 +380,7 @@ const _default_palette = [
     0xff000022, 0xff000011, 0xff00ee00, 0xff00dd00, 0xff00bb00, 0xff00aa00, 0xff008800, 0xff007700, 0xff005500, 0xff004400, 0xff002200, 0xff001100, 0xffee0000, 0xffdd0000, 0xffbb0000, 0xffaa0000,
     0xff880000, 0xff770000, 0xff550000, 0xff440000, 0xff220000, 0xff110000, 0xffeeeeee, 0xffdddddd, 0xffbbbbbb, 0xffaaaaaa, 0xff888888, 0xff777777, 0xff555555, 0xff444444, 0xff222222, 0xff111111,
     0x00000000]
-const DEFAULT_PALETTE = toRGBA.(_default_palette)
-const DEFAULT_MATERIALS = map(1:256) do i
-        Material(i, (_ior = "0.3", _spec = "0.5", _rough = "0.1", _type = "_diffuse", _weight = "1"))
-    end
-
-function placeholder(palette::Vector{RGBA}, materials::Vector{Material})::VoxData
-    VoxData(
-        VOX_VERSION_NUMBER,
-        [Model(Size(2, 2, 2), [Voxel(0, 0, 0, 225), Voxel(0, 1, 1, 215), Voxel(1, 0, 1, 235), Voxel(1, 1,0, 5)])],
-        DEFAULT_PALETTE,
-        DEFAULT_MATERIALS
-    )
-end
+const DEFAULT_PALETTE = (toRGBA(hex) for hex in _default_palette)
+const DEFAULT_MATERIALS = (Material(i, (_type = "_diffuse", _weight = "1", _rough = "0.1", _spec = "0.5", _ior = "0.3")) for i in 0:255)
 
 # module VoxelSpace.MagicaVoxel
