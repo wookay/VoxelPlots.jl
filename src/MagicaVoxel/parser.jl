@@ -254,17 +254,6 @@ function build_chunk(::Val{:MAIN}, stream::IO, content_size, children_size)::Nam
     (models = models, palette = palette, materials = materials)
 end
 
-
-# 1. File Structure : RIFF style
-# 1x4      | char       | id 'VOX ' : 'V' 'O' 'X' 'space', 'V' is first
-# 4        | int        | version number : 150
-function parse_vox_file(stream::IO)::VoxData
-    magic = read(stream, 4) # "VOX "
-    version = toInt32(read(stream, 4)) # 150
-    (chunk_id, chunk) = parse_chunk(stream)
-    VoxData(version, chunk.models, chunk.palette, chunk.materials)
-end
-
 # 2. Chunk Structure
 # 1x4      | char       | chunk id
 # 4        | int        | num bytes of chunk content (N)
@@ -311,20 +300,42 @@ function parse_vox_dict(stream::IO)::NamedTuple
     NamedTuple{Symbol.(tuple(keys...))}(values)
 end
 
+# 1. File Structure : RIFF style
+# 1x4      | char       | id 'VOX ' : 'V' 'O' 'X' 'space', 'V' is first
+# 4        | int        | version number : 150
+function parse_vox_file(stream::IO)::VoxData
+    magic = read(stream, 4) # "VOX "
+    version = toInt32(read(stream, 4)) # 150
+    (chunk_id, chunk) = parse_chunk(stream)
+    VoxData(version, chunk.models, chunk.palette, chunk.materials)
+end
+
+function load(path::String)::VoxData
+    isfile(path) || throw(ChunkError("Unable to read file"))
+    try
+        f = open(path)
+        vox = parse_vox_file(f)
+        close(f)
+    catch
+        throw(ChunkError("Not a valid MagicaVoxel .vox file"))
+    end
+    vox
+end
+
+function placeholder(palette::Vector{<:RGBA}, materials::Vector{Material})::VoxData
+    VoxData(
+        VOX_VERSION_NUMBER,
+        [Model(Size(2, 2, 2), [Voxel(0, 0, 0, 225), Voxel(0, 1, 1, 215), Voxel(1, 0, 1, 235), Voxel(1, 1,0, 5)])],
+        palette,
+        materials
+    )
+end
+
 function chunk_to_data(size::Size)::Vector{UInt8}
     bytes = reinterpret(UInt8, [size.x, size.y, size.z])
     content_size = Int32(length(bytes))
     children_size = Int32(0)
     UInt8["SIZE"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
-end
-
-function chunk_to_data(palette::Vector{RGBA})::Vector{UInt8}
-    bytes = mapfoldl(vcat, palette) do rgba
-        round.(UInt8, .*(0xff, [rgba.r, rgba.g, rgba.b, rgba.alpha]))
-    end
-    content_size = Int32(length(bytes))
-    children_size = Int32(0)
-    UInt8["RGBA"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
 end
 
 function chunk_to_data(voxels::Vector{Voxel})::Vector{UInt8}
@@ -337,28 +348,47 @@ function chunk_to_data(voxels::Vector{Voxel})::Vector{UInt8}
     UInt8["XYZI"..., reinterpret(UInt8, [content_size, children_size, numVoxels])..., bytes...]
 end
 
+function chunk_to_data(model::Model)::Vector{UInt8}
+    mapfoldl(chunk_to_data, vcat, (model.size, model.voxels))
+end
+
+function chunk_to_data(models::Vector{Model})::Vector{UInt8}
+    mapfoldl(chunk_to_data, vcat, models)
+end
+
+function chunk_to_data(palette::Vector{RGBA})::Vector{UInt8}
+    bytes = mapfoldl(vcat, palette) do rgba
+        round.(UInt8, .*(0xff, [rgba.r, rgba.g, rgba.b, rgba.alpha]))
+    end
+    content_size = Int32(length(bytes))
+    children_size = Int32(0)
+    UInt8["RGBA"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
+end
+
 function encode_material_property_string(str::String)::Vector{UInt8}
     bytes = Vector{UInt8}(str)
-    count = Int32(length(bytes))
-    UInt8[reinterpret(UInt8, [count])..., bytes...]
+    len = Int32(length(bytes))
+    UInt8[reinterpret(UInt8, [len])..., bytes...]
 end
 
 function chunk_to_data(material::Material)::Vector{UInt8}
-    count = Int32(length(material.properties))
+    len = Int32(length(material.properties))
     bytes = mapfoldl(vcat, pairs(material.properties)) do (key, value)
         vcat(encode_material_property_string(String(key)),
              encode_material_property_string(value))
     end
-    UInt8[reinterpret(UInt8, [material.id, count])..., bytes...]
+    UInt8[reinterpret(UInt8, [material.id, len])..., bytes...]
 end
 
-function placeholder(palette::Vector{<:RGBA}, materials::Vector{Material})::VoxData
-    VoxData(
-        VOX_VERSION_NUMBER,
-        [Model(Size(2, 2, 2), [Voxel(0, 0, 0, 225), Voxel(0, 1, 1, 215), Voxel(1, 0, 1, 235), Voxel(1, 1,0, 5)])],
-        palette,
-        materials
-    )
+function chunk_to_data(materials::Vector{Material})::Vector{UInt8}
+    mapfoldl(chunk_to_data, vcat, materials)
+end
+
+function chunk_to_data(vox::VoxData)::Vector{UInt8}
+    bytes = mapfoldl(chunk_to_data, vcat, (vox.models, vox.palette, vox.materials))
+    content_size = Int32(0)
+    children_size = Int32(length(bytes))
+    UInt8["VOX "..., reinterpret(UInt8, [vox.version])..., "MAIN"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
 end
 
 const VOX_VERSION_NUMBER = 150
