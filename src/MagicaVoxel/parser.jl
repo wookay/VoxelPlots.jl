@@ -217,6 +217,12 @@ function build_chunk(::Val{:rDIS}, stream::IO, content_size, children_size)::Unk
     return Unknown(:rDIS)
 end
 
+function build_chunk(::Val{:rOBJ}, stream::IO, content_size, children_size)::Unknown
+    node_id = parse_vox_id(stream)
+    read(stream, content_size - 4)
+    return Unknown(:rOBJ)
+end
+
 # 4. Chunk id 'PACK' : if it is absent, only one model in the file
 # 4        | int        | numModels : num of SIZE and XYZI chunks
 function build_chunk(::Val{:PACK}, stream::IO, content_size, children_size)::Vector{Model}
