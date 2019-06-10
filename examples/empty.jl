@@ -1,9 +1,10 @@
 using VoxelSpace.MagicaVoxel
+using .MagicaVoxel: VoxData
 
 # const vox_dir = "/Applications/MagicaVoxel-0.99.4-alpha-macos/vox/"
 const vox_dir = normpath(@__DIR__, "vox")
 
-function resource(filename)
+function resource(filename)::VoxData
     path = normpath(vox_dir, filename)
     f = open(path)
     vox = MagicaVoxel.parse_vox_file(f)

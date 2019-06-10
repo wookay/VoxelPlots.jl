@@ -1,6 +1,7 @@
 # module VoxelSpace.MagicaVoxel
 
 using Colors: RGBA
+using AbstractTrees
 
 struct Size
     x::UInt32
@@ -36,6 +37,22 @@ struct Unknown
     chunk_id::Symbol
 end
 
+mutable struct ChunkUnit
+    chunk_id::Symbol
+    count::Int
+    bytes::Vector{UInt8}
+end
+
+mutable struct ChunkTree
+    units::Vector{ChunkUnit}
+    blob::Vector{UInt8}
+end
+
+struct ChunkStream <: IO
+    io::IO
+    tree::ChunkTree
+end
+
 const AnyChunkType = Union{Size, Material, Vector{Voxel}, Vector{RGBA}, Vector{Model}, Unknown, NamedTuple{(:models, :palette, :materials)}}
 
 struct ChunkError <: Exception
@@ -69,7 +86,7 @@ function toRGBA(palette::UInt32)::RGBA
 end
 
 #=  build_chunk =#
-function build_chunk(::Any, stream::IO, content_size, children_size)
+function build_chunk(::Any, stream::ChunkStream, content_size, children_size)
     throw(ChunkError(""))
 end
 
@@ -77,7 +94,7 @@ end
 # 4        | int        | size x
 # 4        | int        | size y
 # 4        | int        | size z : gravity direction
-function build_chunk(::Val{:SIZE}, stream::IO, content_size, children_size)::Size
+function build_chunk(::Val{:SIZE}, stream::ChunkStream, content_size, children_size)::Size
     x = toInt32(read(stream, 4))
     y = toInt32(read(stream, 4))
     z = toInt32(read(stream, 4))
@@ -87,8 +104,8 @@ end
 # 6. Chunk id 'XYZI' : model voxels
 # 4        | int        | numVoxels (N)
 # 4 x N    | int        | (x, y, z, colorIndex) : 1 byte for each component
-function build_chunk(::Val{:XYZI}, stream::IO, content_size, children_size)::Vector{Voxel}
-    map(1:parse_vox_numof(stream)) do idx
+function build_chunk(::Val{:XYZI}, stream::ChunkStream, content_size, children_size)::Vector{Voxel}
+    map(1:feed_vox_numof(stream)) do idx
         x, y, z, i = read(stream, 4)
         Voxel(x, y, z, i-1)
     end
@@ -96,7 +113,7 @@ end
 
 # 7. Chunk id 'RGBA' : palette
 # 4 x 256  | int        | (R, G, B, A) : 1 byte for each component
-function build_chunk(::Val{:RGBA}, stream::IO, content_size, children_size)::Vector{RGBA}
+function build_chunk(::Val{:RGBA}, stream::ChunkStream, content_size, children_size)::Vector{RGBA}
     palette = Vector{RGBA}(undef, 256)
     for i in 0:255
         r, g, b, a = read(stream, 4)
@@ -117,7 +134,7 @@ end
 # 	  (_att : float)
 # 	  (_flux : float)
 # 	  (_plastic)
-function build_chunk(::Val{:MATL}, stream::IO, content_size, children_size)::Material
+function build_chunk(::Val{:MATL}, stream::ChunkStream, content_size, children_size)::Material
     parse_material(stream)
 end
 
@@ -130,14 +147,14 @@ end
 # int32 	: reserved id (must be -1)
 # int32	: layer id
 # int32	: num of frames (must be 1)
-function build_chunk(::Val{:nTRN}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
-    node_attributes = parse_vox_dict(stream)
-    child_node_id = parse_vox_id(stream)
-    reserved_id = parse_vox_id(stream) # -1
-    layer_id = parse_vox_id(stream)
-    for _ in 1:parse_vox_numof(stream)
-        parse_vox_dict(stream)
+function build_chunk(::Val{:nTRN}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
+    node_attributes = feed_vox_dict(stream)
+    child_node_id = feed_vox_id(stream)
+    reserved_id = feed_vox_id(stream) # -1
+    layer_id = feed_vox_id(stream)
+    for _ in 1:feed_vox_numof(stream)
+        feed_vox_dict(stream)
     end
     return Unknown(:nTRN)
 end
@@ -146,11 +163,11 @@ end
 # int32	: node id
 # DICT	: node attributes
 # int32 	: num of children nodes
-function build_chunk(::Val{:nGRP}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
-    node_attributes = parse_vox_dict(stream)
-    for _ in 1:parse_vox_numof(stream)
-        child_node_id = parse_vox_id(stream)
+function build_chunk(::Val{:nGRP}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
+    node_attributes = feed_vox_dict(stream)
+    for _ in 1:feed_vox_numof(stream)
+        child_node_id = feed_vox_id(stream)
     end
     return Unknown(:nGRP)
 end
@@ -164,12 +181,12 @@ end
 # int32	: model id
 # DICT	: model attributes : reserved
 # }xN
-function build_chunk(::Val{:nSHP}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
-    node_attributes = parse_vox_dict(stream)
-    for _ in 1:parse_vox_numof(stream)
-        model_id = parse_vox_id(stream)
-        model_attributes = parse_vox_dict(stream)
+function build_chunk(::Val{:nSHP}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
+    node_attributes = feed_vox_dict(stream)
+    for _ in 1:feed_vox_numof(stream)
+        model_id = feed_vox_id(stream)
+        model_attributes = feed_vox_dict(stream)
     end
     return Unknown(:nSHP)
 end
@@ -180,54 +197,54 @@ end
 # 	  (_name : string)
 # 	  (_hidden : 0/1)
 # int32	: reserved id, must be -1
-function build_chunk(::Val{:LAYR}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
-    node_attributes = parse_vox_dict(stream)
-    reserved_id = parse_vox_id(stream) # -1
+function build_chunk(::Val{:LAYR}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
+    node_attributes = feed_vox_dict(stream)
+    reserved_id = feed_vox_id(stream) # -1
     return Unknown(:LAYR)
 end
 
-function build_chunk(::Val{:rLIT}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
+function build_chunk(::Val{:rLIT}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
     read(stream, content_size - 4)
     return Unknown(:rLIT)
 end
 
-function build_chunk(::Val{:rAIR}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
+function build_chunk(::Val{:rAIR}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
     read(stream, content_size - 4)
     return Unknown(:rAIR)
 end
 
-function build_chunk(::Val{:rLEN}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
+function build_chunk(::Val{:rLEN}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
     read(stream, content_size - 4)
     return Unknown(:rLEN)
 end
 
-function build_chunk(::Val{:POST}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
+function build_chunk(::Val{:POST}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
     read(stream, content_size - 4)
     return Unknown(:POST)
 end
 
-function build_chunk(::Val{:rDIS}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
+function build_chunk(::Val{:rDIS}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
     read(stream, content_size - 4)
     return Unknown(:rDIS)
 end
 
-function build_chunk(::Val{:rOBJ}, stream::IO, content_size, children_size)::Unknown
-    node_id = parse_vox_id(stream)
+function build_chunk(::Val{:rOBJ}, stream::ChunkStream, content_size, children_size)::Unknown
+    node_id = feed_vox_id(stream)
     read(stream, content_size - 4)
     return Unknown(:rOBJ)
 end
 
 # 4. Chunk id 'PACK' : if it is absent, only one model in the file
 # 4        | int        | numModels : num of SIZE and XYZI chunks
-function build_chunk(::Val{:PACK}, stream::IO, content_size, children_size)::Vector{Model}
+function build_chunk(::Val{:PACK}, stream::ChunkStream, content_size, children_size)::Vector{Model}
     models = Vector{Model}()
-    for _ in 1:parse_vox_numof(stream)
+    for _ in 1:feed_vox_numof(stream)
         (chunk_id, size) = parse_chunk(stream) # SIZE
         (chunk_id, voxels) = parse_chunk(stream) # XYZI
         push!(models, Model(size, voxels))
@@ -236,7 +253,8 @@ function build_chunk(::Val{:PACK}, stream::IO, content_size, children_size)::Vec
 end
 
 # 3. Chunk id 'MAIN' : the root chunk and parent chunk of all the other chunks
-function build_chunk(::Val{:MAIN}, stream::IO, content_size, children_size)::NamedTuple{(:models, :palette, :materials)}
+function build_chunk(::Val{:MAIN}, stream::ChunkStream, content_size, children_size)::NamedTuple{(:models, :palette, :materials)}
+    push_chunk(stream, :MAIN)
     models = Vector{Model}()
     palette = Vector{RGBA}()
     materials = Vector{Material}()
@@ -245,6 +263,7 @@ function build_chunk(::Val{:MAIN}, stream::IO, content_size, children_size)::Nam
     prev_size = nothing
     while cur + children_size > pos
         (chunk_id, chunk) = parse_chunk(stream)
+        push_chunk(stream, chunk_id)
         if :SIZE === chunk_id
             prev_size = chunk
         elseif :XYZI === chunk_id
@@ -266,40 +285,40 @@ end
 # 4        | int        | num bytes of children chunks (M)
 # N        |            | chunk content
 # M        |            | children chunks
-function parse_chunk(stream::IO)::Tuple{Symbol, AnyChunkType}
+function parse_chunk(stream::ChunkStream)::Tuple{Symbol, AnyChunkType}
     id = read(stream, 4)
     chunk_id = Symbol(id)
-    content_size = parse_vox_numof(stream)
-    children_size = parse_vox_numof(stream)
+    content_size = feed_vox_numof(stream)
+    children_size = feed_vox_numof(stream)
     chunk = build_chunk(Val(chunk_id), stream, content_size, children_size)
     (chunk_id, chunk)
 end
 
-function parse_material(stream::IO)::Material
+function parse_material(stream::ChunkStream)::Material
     id = toUInt32(read(stream, 4))
-    properties = parse_vox_dict(stream)
+    properties = feed_vox_dict(stream)
     Material(id, properties)
 end
 
-function parse_vox_id(stream::IO)::Int32
+function feed_vox_id(stream::ChunkStream)::Int32
     toInt32(read(stream, 4))
 end
 
-function parse_vox_numof(stream::IO)::Int32
+function feed_vox_numof(stream::ChunkStream)::Int32
     toInt32(read(stream, 4))
 end
 
-function parse_vox_string(stream::IO)::String
+function feed_vox_string(stream::ChunkStream)::String
     n = toInt32(read(stream, 4))
     String(read(stream, n))
 end
 
-function parse_vox_dict(stream::IO)::NamedTuple
+function feed_vox_dict(stream::ChunkStream)::NamedTuple
     keys = []
     values = []
-    for _ in 1:parse_vox_numof(stream)
-        key = parse_vox_string(stream)
-        value = parse_vox_string(stream)
+    for _ in 1:feed_vox_numof(stream)
+        key = feed_vox_string(stream)
+        value = feed_vox_string(stream)
         push!(keys, key)
         push!(values, value)
     end
@@ -309,7 +328,7 @@ end
 # 1. File Structure : RIFF style
 # 1x4      | char       | id 'VOX ' : 'V' 'O' 'X' 'space', 'V' is first
 # 4        | int        | version number : 150
-function parse_vox_file(stream::IO)::VoxData
+function parse_vox_file(stream::ChunkStream)::VoxData
     magic = read(stream, 4) # "VOX "
     version = toInt32(read(stream, 4)) # 150
     (chunk_id, chunk) = parse_chunk(stream)
@@ -320,7 +339,8 @@ function load(path::String)::VoxData
     isfile(path) || throw(ChunkError("Unable to read file"))
     try
         f = open(path)
-        vox = parse_vox_file(f)
+        tree = ChunkTree([])
+        vox = parse_vox_file(tree, f)
         close(f)
     catch
         throw(ChunkError("Not a valid MagicaVoxel .vox file"))
@@ -395,6 +415,38 @@ function chunk_to_data(vox::VoxData)::Vector{UInt8}
     content_size = Int32(0)
     children_size = Int32(length(bytes))
     UInt8["VOX "..., reinterpret(UInt8, [vox.version])..., "MAIN"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
+end
+
+Base.eof(stream::ChunkStream) = eof(stream.io)
+Base.position(stream::ChunkStream) = position(stream.io)
+Base.close(stream::ChunkStream) = close(stream.io)
+Base.seek(stream::ChunkStream, pos::Int) = seek(stream.io, pos)
+function Base.read(stream::ChunkStream, ::Type{UInt8})
+    byte = read(stream.io, UInt8)
+    push!(stream.tree.blob, byte)
+    byte
+end
+
+function Base.show(io::IO, tree::ChunkTree)
+    print(io, "ChunkTree")
+end
+
+function Base.show(io::IO, unit::ChunkUnit)
+    print(io, "ChunkUnit(", repr(unit.chunk_id), ", ", unit.count, ", ", length(unit.bytes), " bytes)")
+end
+
+AbstractTrees.children(tree::ChunkTree) = tree.units
+
+function push_chunk(stream::ChunkStream, chunk_id::Symbol)
+    if !isempty(stream.tree.units) && last(stream.tree.units).chunk_id === chunk_id
+        unit = stream.tree.units[end]
+        unit.count += 1
+        append!(unit.bytes, stream.tree.blob)
+    else
+        unit = ChunkUnit(chunk_id, 1, stream.tree.blob)
+        push!(stream.tree.units, unit)
+    end
+    stream.tree.blob = []
 end
 
 const VOX_VERSION_NUMBER = 150

@@ -2,7 +2,7 @@ module test_voxelspace_magicavoxel_parser
 
 using Test
 using VoxelSpace.MagicaVoxel
-using .MagicaVoxel: Voxel, Model, Size, Material, VoxData, ChunkError
+using .MagicaVoxel: Voxel, Model, Size, Material, VoxData, ChunkError, ChunkStream, ChunkTree
 using .MagicaVoxel: DEFAULT_PALETTE, DEFAULT_MATERIALS
 using .MagicaVoxel: parse_chunk, parse_material, parse_vox_file, chunk_to_data, placeholder
 using Colors: RGBA
@@ -10,8 +10,10 @@ using Colors: RGBA
 function resource(block, filename)
     path = normpath(@__DIR__, "resources", filename)
     f = open(path)
-    block(f)
-    close(f)
+    tree = ChunkTree([], UInt8[])
+    stream = ChunkStream(f, tree)
+    block(stream)
+    close(stream)
 end
 
 # https://github.com/davidedmonds/dot_vox/blob/master/src/parser.rs#L209
