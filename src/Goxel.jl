@@ -1,5 +1,5 @@
-module Goxel # VoxelSpace
+module Goxel # VoxelPlots
 
 include("Goxel/mesh.jl")
 
-end # module VoxelSpace.Goxel
+end # module VoxelPlots.Goxel

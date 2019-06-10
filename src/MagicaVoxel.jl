@@ -1,5 +1,5 @@
-module MagicaVoxel # VoxelSpace
+module MagicaVoxel # VoxelPlots
 
 include("MagicaVoxel/parser.jl")
 
-end # module VoxelSpace.MagicaVoxel
+end # module VoxelPlots.MagicaVoxel

@@ -1,7 +1,7 @@
-module test_voxelspace_magicavoxel_chunktree
+module test_voxelplots_magicavoxel_chunktree
 
 using Test
-using VoxelSpace.MagicaVoxel
+using VoxelPlots.MagicaVoxel
 using .MagicaVoxel: VoxData, ChunkStream, ChunkTree
 using AbstractTrees
 
@@ -13,7 +13,7 @@ function resource(filename)::Tuple{ChunkTree, VoxData}
     tree = ChunkTree([], UInt8[])
     stream = ChunkStream(f, tree)
     vox = MagicaVoxel.parse_vox_file(stream)
-    close(f)
+    close(stream)
     return (tree, vox)
 end
 
@@ -43,4 +43,4 @@ ChunkTree
 └─ ChunkUnit(:rDIS, 1, 87 bytes)
 """
 
-end # module test_voxelspace_magicavoxel_chunktree
+end # module test_voxelplots_magicavoxel_chunktree

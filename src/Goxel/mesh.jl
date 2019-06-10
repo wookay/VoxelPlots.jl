@@ -1,4 +1,4 @@
-# module VoxelSpace.Goxel
+# module VoxelPlots.Goxel
 
 struct Mesh
 end
@@ -12,4 +12,4 @@ end
 function save(mesh::Mesh, path::String)
 end
 
-# module VoxelSpace.Goxel
+# module VoxelPlots.Goxel

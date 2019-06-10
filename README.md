@@ -1,4 +1,4 @@
-### VoxelSpace.jl 👾
+### VoxelPlots.jl 👾
 
 |  **Build Status**               |
 |:-------------------------------:|
@@ -10,5 +10,5 @@
  * https://github.com/davidedmonds/dot_vox
 
 
-[travis-img]: https://api.travis-ci.org/wookay/VoxelSpace.jl.svg?branch=master
-[travis-url]: https://travis-ci.org/wookay/VoxelSpace.jl
+[travis-img]: https://api.travis-ci.org/wookay/VoxelPlots.jl.svg?branch=master
+[travis-url]: https://travis-ci.org/wookay/VoxelPlots.jl

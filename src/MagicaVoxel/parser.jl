@@ -1,4 +1,4 @@
-# module VoxelSpace.MagicaVoxel
+# module VoxelPlots.MagicaVoxel
 
 using Colors: RGBA
 using AbstractTrees
@@ -471,4 +471,4 @@ const _default_palette = [
 const DEFAULT_PALETTE = (toRGBA(hex) for hex in _default_palette)
 const DEFAULT_MATERIALS = (Material(i, (_type = "_diffuse", _weight = "1", _rough = "0.1", _spec = "0.5", _ior = "0.3")) for i in 0:255)
 
-# module VoxelSpace.MagicaVoxel
+# module VoxelPlots.MagicaVoxel

@@ -1,7 +1,7 @@
-module test_voxelspace_magicavoxel_parser
+module test_voxelplots_magicavoxel_parser
 
 using Test
-using VoxelSpace.MagicaVoxel
+using VoxelPlots.MagicaVoxel
 using .MagicaVoxel: Voxel, Model, Size, Material, VoxData, ChunkError, ChunkStream, ChunkTree
 using .MagicaVoxel: DEFAULT_PALETTE, DEFAULT_MATERIALS
 using .MagicaVoxel: parse_chunk, parse_material, parse_vox_file, chunk_to_data, placeholder
@@ -88,4 +88,4 @@ resource("placeholder-with-materials.vox") do f
     @test chunk == placeholder(collect(DEFAULT_PALETTE), materials)
 end
 
-end # module test_voxelspace_magicavoxel_parser
+end # module test_voxelplots_magicavoxel_parser

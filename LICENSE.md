@@ -1,4 +1,4 @@
-The VoxelSpace.jl package is licensed under the MIT "Expat" License:
+The VoxelPlots.jl package is licensed under the MIT "Expat" License:
 
 > Copyright (c) 2019: WooKyoung Noh.
 >

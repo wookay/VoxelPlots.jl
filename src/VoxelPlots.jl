@@ -1,4 +1,4 @@
-module VoxelSpace
+module VoxelPlots
 
 include("MagicaVoxel.jl")
 include("Goxel.jl")
