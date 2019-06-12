@@ -399,15 +399,32 @@ end
 
 function chunk_to_data(material::Material)::Vector{UInt8}
     len = Int32(length(material.properties))
-    bytes = mapfoldl(vcat, pairs(material.properties)) do (key, value)
+    bytes = vcat(reinterpret(UInt8, [material.id, len]),
+        mapfoldl(vcat, pairs(material.properties)) do (key, value)
         vcat(encode_material_property_string(String(key)),
              encode_material_property_string(value))
-    end
-    UInt8[reinterpret(UInt8, [material.id, len])..., bytes...]
+    end)
+    content_size = Int32(length(bytes))
+    children_size = Int32(0)
+    UInt8["MATL"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
 end
 
 function chunk_to_data(materials::Vector{Material})::Vector{UInt8}
     mapfoldl(chunk_to_data, vcat, materials)
+end
+
+function chunk_to_data(tree::ChunkTree, vox::VoxData)::Vector{UInt8}
+    models, palette, materials = chunk_to_data.((vox.models, vox.palette, vox.materials))
+    bytes = foldl(vcat, (
+        models,
+        foldl(vcat, (unit.bytes for unit in tree.units[4:8])),
+        palette,
+        materials,
+        foldl(vcat, (unit.bytes for unit in tree.units[11:end]))
+    ))
+    content_size = Int32(0)
+    children_size = Int32(length(bytes))
+    UInt8["VOX "..., reinterpret(UInt8, [vox.version])..., "MAIN"..., reinterpret(UInt8, [content_size, children_size])..., bytes...]
 end
 
 function chunk_to_data(vox::VoxData)::Vector{UInt8}

@@ -2,29 +2,29 @@ module test_voxelplots_magicavoxel_chunktree
 
 using Test
 using VoxelPlots.MagicaVoxel
-using .MagicaVoxel: VoxData, ChunkStream, ChunkTree
+using .MagicaVoxel: VoxData, ChunkStream, ChunkTree, chunk_to_data
 using AbstractTrees
 
 vox_dir = normpath(@__DIR__, "resources")
 
-function resource(filename)::Tuple{ChunkTree, VoxData}
+function resource(block, filename)
     path = normpath(vox_dir, filename)
     f = open(path)
     tree = ChunkTree([], UInt8[])
     stream = ChunkStream(f, tree)
-    vox = MagicaVoxel.parse_vox_file(stream)
+    block(stream)
     close(stream)
-    return (tree, vox)
 end
 
 function Base.show(io::IO, tree::ChunkTree)
     print(io, "ChunkTree")
 end
 
-(tree, vox) = resource("placeholder.vox")
-buf = IOBuffer()
-AbstractTrees.print_tree(buf, tree)
-@test String(take!(buf)) == """
+resource("placeholder.vox") do f
+    vox = MagicaVoxel.parse_vox_file(f)
+    buf = IOBuffer()
+    AbstractTrees.print_tree(buf, f.tree)
+    @test String(take!(buf)) == """
 ChunkTree
 ├─ ChunkUnit(:MAIN, 1, 20 bytes)
 ├─ ChunkUnit(:SIZE, 1, 24 bytes)
@@ -42,5 +42,14 @@ ChunkTree
 ├─ ChunkUnit(:POST, 1, 83 bytes)
 └─ ChunkUnit(:rDIS, 1, 87 bytes)
 """
+    total_num_bytes = sum(length(unit.bytes) for unit in f.tree.units)
+
+    seekstart(f)
+    bytes = read(f)
+    @test length(bytes) == total_num_bytes
+
+    data = chunk_to_data(f.tree, vox)
+    @test data == bytes
+end
 
 end # module test_voxelplots_magicavoxel_chunktree

@@ -51,7 +51,7 @@ resource("valid_material.bytes") do f
     @test parse_material(f) == chunk
 
     seekstart(f)
-    @test chunk_to_data(chunk) == read(f)
+    @test chunk_to_data(chunk)[12+1:end] == read(f)
 end
 
 resource("default_palette.bytes") do f
