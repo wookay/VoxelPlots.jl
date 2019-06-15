@@ -339,9 +339,10 @@ function load(path::String)::VoxData
     isfile(path) || throw(ChunkError("Unable to read file"))
     try
         f = open(path)
-        tree = ChunkTree([])
-        vox = parse_vox_file(tree, f)
-        close(f)
+        tree = ChunkTree([], UInt8[])
+        stream = ChunkStream(f, tree)
+        vox = parse_vox_file(stream)
+        close(stream)
     catch
         throw(ChunkError("Not a valid MagicaVoxel .vox file"))
     end
@@ -366,6 +367,7 @@ end
 
 function chunk_to_data(voxels::Vector{Voxel})::Vector{UInt8}
     numVoxels = Int32(length(voxels))
+    iszero(numVoxels) && return UInt8[]
     bytes = mapfoldl(vcat, voxels) do voxel
         [voxel.x, voxel.y, voxel.z, UInt8(voxel.i + 1)]
     end
@@ -445,7 +447,7 @@ function Base.read(stream::ChunkStream, ::Type{UInt8})
 end
 
 function Base.show(io::IO, tree::ChunkTree)
-    print(io, "ChunkTree")
+    print(io, "ChunkTree", " (", length(tree.units), " units)")
 end
 
 function Base.show(io::IO, unit::ChunkUnit)
